@@ -195,6 +195,17 @@ describe.skipIf(isWindows)('POSIX permissions', () => {
 });
 
 describe.skipIf(!isWindows)('Windows DACL preservation', () => {
+  it('preserves the exact inherited descriptor when staging already has the required security', async () => {
+    const project = await setupProject();
+    const target = path.join(projectDir, 'docs/index.md');
+    const [before] = await captureWindowsSecurity(target);
+    const note = await readNoteFile(project, 'docs/index.md');
+    expect((await writeNote(project, 'docs/index.md', '# Inherited update\n', { expectedRevision: note.revision, dryRun: false })).applied).toBe(true);
+    const [after] = await captureWindowsSecurity(target);
+    expect(after).toBe(before);
+    expect(await fs.readFile(target, 'utf8')).toBe('# Inherited update\n');
+  });
+
   it('returns a successful exit code from the standalone ACL preflight', async () => {
     const { stdout } = await promisify(execFile)(process.execPath, [path.resolve('scripts/diagnose-windows-acl.mjs')],
       { timeout: 30000, windowsHide: true, encoding: 'utf8' });
