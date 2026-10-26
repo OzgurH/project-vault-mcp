@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="420" viewBox="0 0 1280 420" role="img" aria-labelledby="title desc">
+  <title id="title">Project Vault MCP</title>
+  <desc id="desc">Architecture knowledge that stays with your code. Local Markdown, connected notes, and revision-aware updates for AI agents.</desc>
+  <defs>
+    <linearGradient id="bg" x2="1" y2="1"><stop stop-color="#0b1020"/><stop offset="1" stop-color="#142b38"/></linearGradient>
+    <linearGradient id="accent"><stop stop-color="#78f5cc"/><stop offset="1" stop-color="#7cb8ff"/></linearGradient>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M 40 0 L 0 0 0 40" fill="none" stroke="#a0d4e8" stroke-opacity=".055"/></pattern>
+  </defs>
+  <rect width="1280" height="420" rx="24" fill="url(#bg)"/>
+  <rect width="1280" height="420" rx="24" fill="url(#grid)"/>
+  <rect x="64" y="63" width="238" height="30" rx="15" fill="#78f5cc" fill-opacity=".1" stroke="#78f5cc" stroke-opacity=".3"/>
+  <circle cx="81" cy="78" r="4" fill="#78f5cc"/>
+  <text x="95" y="83" fill="#a9f6df" font-family="Segoe UI,Arial,sans-serif" font-size="12" font-weight="600" letter-spacing="1.8">LOCAL FIRST · OPEN SOURCE</text>
+  <text x="60" y="175" fill="#f5f8fc" font-family="Segoe UI,Arial,sans-serif" font-size="64" font-weight="750" letter-spacing="-2">Project Vault <tspan fill="#78f5cc">MCP</tspan></text>
+  <text x="64" y="231" fill="#b6c9da" font-family="Segoe UI,Arial,sans-serif" font-size="26">Architecture knowledge that stays with your code.</text>
+  <text x="64" y="279" fill="#829db4" font-family="Segoe UI,Arial,sans-serif" font-size="18">Markdown you own. Context agents can use. Updates you can review.</text>
+  <g font-family="Segoe UI,Arial,sans-serif" font-size="13" fill="#d5e4ef">
+    <rect x="64" y="324" width="134" height="34" rx="8" fill="#fff" fill-opacity=".055"/><text x="84" y="346">Any repository</text>
+    <rect x="210" y="324" width="149" height="34" rx="8" fill="#fff" fill-opacity=".055"/><text x="230" y="346">Obsidian friendly</text>
+    <rect x="371" y="324" width="151" height="34" rx="8" fill="#fff" fill-opacity=".055"/><text x="391" y="346">Read + write MCP</text>
+  </g>
+  <g transform="translate(965 114)" fill="none" stroke="url(#accent)" stroke-width="2">
+    <path d="M0 44 88 0 176 44 176 149 88 195 0 149Z" fill="#78f5cc" fill-opacity=".025"/>
+    <path d="M0 44 88 91 176 44M88 91V195" opacity=".45"/>
+    <rect x="58" y="45" width="60" height="73" rx="8" fill="#102331"/>
+    <path d="M72 66h31M72 80h31M72 94h19" stroke="#a9e9ee"/>
+    <circle cx="0" cy="44" r="6" fill="#78f5cc" stroke="none"/><circle cx="176" cy="44" r="6" fill="#7cb8ff" stroke="none"/><circle cx="88" cy="195" r="6" fill="#78f5cc" stroke="none"/>
+  </g>
+</svg>

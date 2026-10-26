@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "name": "Project Vault MCP",
+  "notesRoots": [{ "id": "docs", "path": "docs" }],
+  "entryNotes": ["docs/index.md", "docs/architecture.md"],
+  "exclude": ["**/superpowers/**"],
+  "allowWrites": false
+}

@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "name": "Example web service",
+  "notesRoots": [{ "id": "docs", "path": "docs" }],
+  "entryNotes": ["docs/index.md", "docs/architecture/overview.md"],
+  "allowWrites": false
+}

@@ -1,0 +1,25 @@
+name: Bug report
+description: Report an observable problem with a reproducible example.
+labels: [bug]
+body:
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What happened?
+      description: Include expected and actual behavior. Do not include private notes or secrets.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Prefer a minimal, generic Markdown fixture and the exact command or MCP tool arguments.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: OS, Node version, Project Vault version, MCP client/version
+    validations:
+      required: true
