@@ -19,12 +19,15 @@
 
 ---
 
-Project Vault MCP turns ordinary Markdown into a connected knowledge layer for a software project. It helps AI agents find architectural context, follow decisions, check references, and create or update notes through the Model Context Protocol.
+Project Vault MCP turns ordinary Markdown into a connected knowledge layer for a software project. Retrieve relevant project knowledge on demand to reduce unnecessary token usage, keep context focused, and make better use of your agent's context window. Agents can find architectural context, follow decisions, check references, and create or update notes through the Model Context Protocol.
 
 Your notes stay on your filesystem. Use Obsidian, VS Code, another editor, or plain Git. There is no proprietary vault format, hosted knowledge service, embedding bill, or application-framework dependency.
 
 ## What you gain
 
+- ⭐ **Reduce unnecessary token usage.** Retrieve relevant note sections so agents can avoid repeatedly loading entire documentation sets or asking you to paste the same background.
+- ⭐ **Keep reasoning focused.** Bring relevant architecture, conventions, and recorded decisions into the conversation to help reduce distraction from unrelated context and repeated guesswork.
+- ⭐ **Make better use of limited context windows.** Keep project knowledge in durable Markdown and retrieve it when needed, leaving more room in the conversation for the current task.
 - ⭐ **Spend less time re-explaining your project.** Keep architecture, conventions, and decisions in reusable notes that MCP-compatible agents can retrieve across sessions.
 - ⭐ **Find answers you can trace.** Search relevant note sections with file IDs, line numbers, and revision metadata so you can inspect the source behind an answer.
 - ⭐ **Understand how decisions connect.** Follow Markdown links, Obsidian wikilinks, and backlinks; find broken references and ambiguous note names.
@@ -33,6 +36,8 @@ Your notes stay on your filesystem. Use Obsidian, VS Code, another editor, or pl
 - ⭐ **Keep control of your knowledge.** Store editable Markdown locally, manage it in Git, and limit agent access with configured roots, privacy labels, and explicit write permissions.
 - ⭐ **Use it with your existing project and editor.** Adopt an existing documentation folder or start with architecture, module, decision, and runbook templates; use Obsidian, VS Code, or another editor.
 - ⭐ **Avoid extra search infrastructure.** Retrieve project knowledge without an embedding service, a vector database, or a hosted knowledge platform.
+
+Token savings depend on the client, retrieval choices, and workload; no savings percentage has been benchmarked. Focused retrieval does not increase a model's context limit or guarantee correct reasoning.
 
 > **Local-first, with a clear boundary:** this server makes no model calls and sends no telemetry. Your MCP client can still send retrieved notes to its model provider. Only connect a project you intend that client to access.
 
