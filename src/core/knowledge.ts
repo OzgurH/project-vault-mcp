@@ -11,10 +11,10 @@ import { posix } from 'node:path';
 import { slug as githubSlug } from 'github-slugger';
 import { minimatch } from 'minimatch';
 import { VaultError } from './errors.js';
-import { parseNote } from './markdown.js';
+import { parseNote, DEFAULT_MAX_LINKS_PER_NOTE } from './markdown.js';
 import { listNoteIds, readNoteFile, readBoundedBytes } from './files.js';
 import { resolveAttachment, resolveNote, resolveSource } from './paths.js';
-import type { Diagnostic, KnowledgeStatus, NoteFile, NoteLink, ParsedNote, Project, SearchHit, Section } from './types.js';
+import type { Diagnostic, KnowledgeStatus, Limits, NoteFile, NoteLink, ParsedNote, Project, SearchHit, Section } from './types.js';
 
 /** Storage contract consumed by the knowledge layer (implemented by files.ts and paths.ts). */
 export interface StorageApi {
@@ -62,10 +62,14 @@ const BM25_K1 = 1.2;
 const BM25_B = 0.75;
 const HEADING_WEIGHT = 3;
 const PATH_WEIGHT = 1.5;
+function maxLinksPerNote(limits: Limits): number {
+  const configured = limits.maxLinksPerNote;
+  return isPositiveInteger(configured) ? configured : DEFAULT_MAX_LINKS_PER_NOTE;
+}
 
 /** Diagnostic codes that make check() fail. Informational codes are listed in INFO_CODES. */
 const FAILING_CODES = new Set([
-  'SCAN_FAILED', 'SCAN_LIMIT_EXCEEDED', 'INVALID_FRONTMATTER', 'NOTE_UNREADABLE', 'NOTE_TOO_LARGE', 'ENTRY_NOTE_MISSING',
+  'SCAN_FAILED', 'SCAN_LIMIT_EXCEEDED', 'INVALID_FRONTMATTER', 'NOTE_PARSE_LIMIT', 'NOTE_UNREADABLE', 'NOTE_TOO_LARGE', 'ENTRY_NOTE_MISSING',
   'LINK_BROKEN', 'LINK_AMBIGUOUS', 'LINK_MISSING_HEADING', 'LINK_OUTSIDE_ROOT',
   'SOURCE_CHANGED', 'SOURCE_MISSING', 'SOURCE_INACCESSIBLE', 'SOURCE_INVALID',
   'SOURCE_LIMIT_EXCEEDED',
@@ -108,9 +112,20 @@ interface Generation {
   resolvedLinks: Map<string, ResolvedLink[]> | null;
 }
 
-function emptyGeneration(): Generation {
+/**
+ * Per-response revalidation session. Every note that contributes to a response
+ * is re-read through storage exactly once per response so that current
+ * authorization (existence, privacy, readability) and the indexed revision are
+ * enforced even inside the rescan interval.
+ */
+interface Revalidation {
+  verified: Map<string, Promise<boolean>>;
+}
+
+/** A generation that holds no note data. Used before the first scan and after any failed scan. */
+function emptyGeneration(number = 0, diagnostics: Diagnostic[] = [{ code: 'NOT_SCANNED', message: 'The knowledge index has not been built yet' }]): Generation {
   return {
-    number: 0,
+    number,
     indexedAt: null,
     notes: new Map(),
     docs: [],
@@ -119,7 +134,7 @@ function emptyGeneration(): Generation {
     files: 0,
     bytes: 0,
     degraded: true,
-    diagnostics: [{ code: 'NOT_SCANNED', message: 'The knowledge index has not been built yet' }],
+    diagnostics,
     resolvedLinks: null,
   };
 }
@@ -181,10 +196,28 @@ export class KnowledgeBase {
     };
   }
 
+  /**
+   * Rebuild the index. A scan that cannot complete fails closed: the previous
+   * generation is discarded entirely so that no previously indexed note body,
+   * excerpt, link or metadata can be served from a cache whose authorization
+   * can no longer be re-established.
+   */
   private async scan(): Promise<void> {
+    try {
+      await this.scanOrThrow();
+    } catch (error) {
+      this.install(emptyGeneration(this.generation.number + 1, [{
+        code: 'SCAN_FAILED',
+        message: `Scanning notes failed (${errorCode(error) ?? 'INTERNAL_ERROR'}); the index was discarded`,
+      }]));
+    }
+  }
+
+  private async scanOrThrow(): Promise<void> {
     const storage = await this.storage();
     const { config } = this.project;
     const limits = config.limits;
+    const maxLinks = maxLinksPerNote(limits);
     const diagnostics: Diagnostic[] = [];
     let degraded = false;
     const notes = new Map<string, IndexedNote>();
@@ -194,16 +227,12 @@ export class KnowledgeBase {
     try {
       ids = [...(await storage.listNoteIds(this.project))].sort();
     } catch (error) {
-      const previous = this.generation;
-      this.install({
-        ...previous,
-        number: previous.number + 1,
-        degraded: true,
-        diagnostics: [{ code: 'SCAN_FAILED', message: errorCode(error) === 'LIMIT_EXCEEDED'
+      this.install(emptyGeneration(this.generation.number + 1, [{
+        code: 'SCAN_FAILED',
+        message: errorCode(error) === 'LIMIT_EXCEEDED'
           ? 'Listing notes exceeded limits.maxFiles; narrow the configured roots or review that limit'
-          : `Listing notes failed (${errorCode(error) ?? 'IO_ERROR'})` }],
-        resolvedLinks: null,
-      });
+          : `Listing notes failed (${errorCode(error) ?? 'IO_ERROR'})`,
+      }]));
       return;
     }
 
@@ -219,7 +248,7 @@ export class KnowledgeBase {
         file = await storage.readNoteFile(this.project, noteId);
       } catch (error) {
         const code = errorCode(error);
-        if (code === 'PRIVATE_NOTE') continue;
+        if (code === 'PRIVATE_NOTE' || code === 'CONTENT_RESTRICTED') continue;
         degraded = true;
         diagnostics.push({
           code: code === 'INVALID_FRONTMATTER' ? code : 'NOTE_UNREADABLE',
@@ -240,10 +269,10 @@ export class KnowledgeBase {
       }
       let parsed: ParsedNote;
       try {
-        parsed = parseNote(file.content);
+        parsed = parseNote(file.content, { maxLinks });
       } catch (error) {
         degraded = true;
-        diagnostics.push({ code: 'INVALID_FRONTMATTER', noteId, message: `Note could not be parsed (${errorCode(error) ?? 'PARSE_ERROR'})` });
+        diagnostics.push({ code: errorCode(error) === 'LIMIT_EXCEEDED' ? 'NOTE_PARSE_LIMIT' : 'INVALID_FRONTMATTER', noteId, message: `Note could not be parsed (${errorCode(error) ?? 'PARSE_ERROR'})` });
         continue;
       }
       if (parsed.metadata['private'] === true) continue;
@@ -276,6 +305,58 @@ export class KnowledgeBase {
   private install(generation: Generation): void {
     this.generation = generation;
     this.lastScanAt = Date.now();
+  }
+
+  // ---------------------------------------------------------------- revalidation
+
+  private newRevalidation(): Revalidation {
+    return { verified: new Map() };
+  }
+
+  /**
+   * True only when the indexed note is still readable through storage right now
+   * and the bytes on disk still match the indexed revision. Any other outcome
+   * (deleted, private, excluded, unreadable, oversized, or changed) evicts the
+   * note from the generation so neither this response nor later requests can
+   * serve its indexed content. Results are shared within one response.
+   */
+  private verify(session: Revalidation, g: Generation, noteId: string): Promise<boolean> {
+    let pending = session.verified.get(noteId);
+    if (!pending) {
+      pending = this.verifyNow(g, noteId);
+      session.verified.set(noteId, pending);
+    }
+    return pending;
+  }
+
+  private async verifyNow(g: Generation, noteId: string): Promise<boolean> {
+    const note = g.notes.get(noteId);
+    if (!note) return false;
+    let current: NoteFile;
+    try {
+      const storage = await this.storage();
+      current = await storage.readNoteFile(this.project, noteId);
+    } catch {
+      this.evict(g, noteId);
+      return false;
+    }
+    if (current.revision !== note.revision || current.bytes > this.project.config.limits.maxFileBytes) {
+      this.evict(g, noteId);
+      return false;
+    }
+    return true;
+  }
+
+  /** Drop a note's body, sections, docs and cached links from a generation and force a rescan on the next request. */
+  private evict(g: Generation, noteId: string): void {
+    const note = g.notes.get(noteId);
+    if (!note) return;
+    g.notes.delete(noteId);
+    g.docs = g.docs.filter((doc) => doc.noteId !== noteId);
+    g.files = g.notes.size;
+    g.bytes = Math.max(0, g.bytes - note.bytes);
+    g.resolvedLinks = null;
+    if (this.generation === g) this.lastScanAt = 0;
   }
 
   // ---------------------------------------------------------------- indexing
@@ -322,21 +403,29 @@ export class KnowledgeBase {
     }
     if (options.type !== undefined && typeof options.type !== 'string') throw new VaultError('INVALID_ARGUMENT', 'type must be a string');
     await this.refresh();
-    const ranked = this.rank(query, limit, options.type);
+    return this.searchWith(this.generation, query, limit, options.type, this.newRevalidation());
+  }
+
+  /** Ranked search over one generation; every emitted note is revalidated through storage first. */
+  private async searchWith(g: Generation, query: string, limit: number, type: string | undefined, session: Revalidation): Promise<SearchHit[]> {
+    const { limits } = this.project.config;
+    const ranked = this.rank(g, query, type);
+    const queryTokens = this.tokenize(query);
     const hits: SearchHit[] = [];
     let used = 0;
     for (const { doc, score } of ranked) {
+      if (hits.length >= limit) break;
       const remaining = limits.maxResponseChars - used;
       if (remaining < MIN_EXCERPT_CHARS) break;
-      const excerpt = this.excerpt(doc.section, this.tokenize(query), Math.min(EXCERPT_MAX_CHARS, remaining));
+      if (!(await this.verify(session, g, doc.noteId))) continue;
+      const excerpt = this.excerpt(doc.section, queryTokens, Math.min(EXCERPT_MAX_CHARS, remaining));
       used += excerpt.length;
-      hits.push(this.toHit(doc.noteId, doc.section, excerpt, score));
+      hits.push(this.toHit(g, doc.noteId, doc.section, excerpt, score));
     }
     return hits;
   }
 
-  private rank(query: string, limit: number, type?: string): { doc: IndexedDoc; score: number }[] {
-    const g = this.generation;
+  private rank(g: Generation, query: string, type?: string): { doc: IndexedDoc; score: number }[] {
     const queryTerms = [...new Set(this.tokenize(query))];
     if (queryTerms.length === 0) return [];
     const total = g.docs.length;
@@ -357,7 +446,7 @@ export class KnowledgeBase {
     scored.sort((a, b) => b.score - a.score
       || (a.doc.noteId < b.doc.noteId ? -1 : a.doc.noteId > b.doc.noteId ? 1 : 0)
       || a.doc.section.line - b.doc.section.line);
-    return scored.slice(0, limit);
+    return scored;
   }
 
   private excerpt(section: Section, queryTerms: string[], maxChars: number): string {
@@ -380,8 +469,8 @@ export class KnowledgeBase {
     return text.trim().slice(0, maxChars);
   }
 
-  private toHit(noteId: string, section: Section, excerpt: string, score: number): SearchHit {
-    const note = this.generation.notes.get(noteId);
+  private toHit(g: Generation, noteId: string, section: Section, excerpt: string, score: number): SearchHit {
+    const note = g.notes.get(noteId);
     return {
       noteId,
       heading: section.heading,
@@ -390,7 +479,7 @@ export class KnowledgeBase {
       excerpt,
       score,
       indexRevision: note?.revision ?? '',
-      indexedAt: this.generation.indexedAt ?? '',
+      indexedAt: g.indexedAt ?? '',
     };
   }
 
@@ -437,38 +526,69 @@ export class KnowledgeBase {
   // ---------------------------------------------------------------- links
 
   async links(noteId: string): Promise<{ noteId: string; outgoing: ResolvedLink[]; backlinks: Backlink[] }> {
+    if (typeof noteId !== 'string' || noteId.length === 0) throw new VaultError('INVALID_ARGUMENT', 'noteId must be a non-empty string');
     await this.refresh();
-    const note = this.generation.notes.get(noteId);
+    let session = this.newRevalidation();
+    let g = this.generation;
+    let note = g.notes.get(noteId);
+    if (note && !(await this.verify(session, g, noteId))) {
+      // The note changed or was revoked after the last scan. Rescan once so the
+      // answer reflects current bytes, then authorize again against the new generation.
+      await this.refresh(true);
+      session = this.newRevalidation();
+      g = this.generation;
+      note = g.notes.get(noteId);
+      if (note && !(await this.verify(session, g, noteId))) note = undefined;
+    }
     if (!note) throw new VaultError('NOTE_NOT_FOUND', 'Note is not in the index');
-    const resolved = await this.resolveAllLinks();
-    const outgoing = resolved.get(noteId) ?? [];
+    const resolved = await this.resolveAllLinks(g);
+
+    // Outgoing links may only name notes that are still readable at their indexed revision.
+    const outgoing: ResolvedLink[] = [];
+    for (const link of resolved.get(noteId) ?? []) {
+      outgoing.push(await this.authorizeLink(session, g, noteId, link));
+    }
+
     const backlinks: Backlink[] = [];
     for (const [sourceId, links] of resolved) {
-      for (const link of links) {
-        if (link.noteId === noteId && (link.status === 'ok' || link.status === 'missing_heading')) {
-          backlinks.push({ noteId: sourceId, line: link.line, target: link.target });
-        }
-      }
+      const matching = links.filter((link) => link.noteId === noteId && (link.status === 'ok' || link.status === 'missing_heading'));
+      if (matching.length === 0) continue;
+      if (sourceId !== noteId && !(await this.verify(session, g, sourceId))) continue;
+      for (const link of matching) backlinks.push({ noteId: sourceId, line: link.line, target: link.target });
     }
     backlinks.sort((a, b) => (a.noteId < b.noteId ? -1 : a.noteId > b.noteId ? 1 : a.line - b.line));
-    return { noteId, outgoing: outgoing.map((l) => ({ ...l })), backlinks };
+    return { noteId, outgoing, backlinks };
   }
 
-  private async resolveAllLinks(): Promise<Map<string, ResolvedLink[]>> {
-    const g = this.generation;
+  /** Strip resolution details that point at notes which are no longer readable at their indexed revision. */
+  private async authorizeLink(session: Revalidation, g: Generation, sourceId: string, link: ResolvedLink): Promise<ResolvedLink> {
+    const stripped: ResolvedLink = { target: link.target, line: link.line, embed: link.embed, status: 'broken' };
+    if (link.noteId !== undefined && link.noteId !== sourceId && !(await this.verify(session, g, link.noteId))) return stripped;
+    if (link.candidates) {
+      const candidates: string[] = [];
+      for (const candidate of link.candidates) {
+        if (candidate === sourceId || (await this.verify(session, g, candidate))) candidates.push(candidate);
+      }
+      if (candidates.length === 0) return stripped;
+      return { ...link, candidates };
+    }
+    return { ...link };
+  }
+
+  private async resolveAllLinks(g: Generation): Promise<Map<string, ResolvedLink[]>> {
     if (g.resolvedLinks) return g.resolvedLinks;
     const resolved = new Map<string, ResolvedLink[]>();
     for (const noteId of [...g.notes.keys()].sort()) {
       const note = g.notes.get(noteId)!;
       const links: ResolvedLink[] = [];
-      for (const link of note.parsed.links) links.push(await this.resolveLink(note, link));
+      for (const link of note.parsed.links) links.push(await this.resolveLink(g, note, link));
       resolved.set(noteId, links);
     }
     if (this.generation === g) g.resolvedLinks = resolved;
     return resolved;
   }
 
-  private async resolveLink(note: IndexedNote, link: NoteLink): Promise<ResolvedLink> {
+  private async resolveLink(g: Generation, note: IndexedNote, link: NoteLink): Promise<ResolvedLink> {
     const base: ResolvedLink = { target: link.target, line: link.line, embed: link.embed, status: 'broken' };
     const raw = link.target.trim();
     if (raw.length === 0) return base;
@@ -491,7 +611,6 @@ export class KnowledgeBase {
     }
 
     const storage = await this.storage();
-    const g = this.generation;
     const dir = posix.dirname(note.rel);
     const relative = posix.normalize(posix.join(dir === '.' ? '' : dir, pathPart));
     const hasMd = /\.md$/iu.test(relative);
@@ -567,6 +686,8 @@ export class KnowledgeBase {
     const budget = Math.min(maxChars ?? config.limits.maxResponseChars, config.limits.maxResponseChars);
     if (topic !== undefined && typeof topic !== 'string') throw new VaultError('INVALID_ARGUMENT', 'topic must be a string');
     await this.refresh();
+    const session = this.newRevalidation();
+    const g = this.generation;
     const excerpts: SearchHit[] = [];
     const seen = new Set<string>();
     let used = 0;
@@ -586,8 +707,9 @@ export class KnowledgeBase {
       return hit.excerpt.length > 0;
     };
     for (const entryId of config.entryNotes) {
-      const note = this.generation.notes.get(entryId);
+      const note = g.notes.get(entryId);
       if (!note) continue;
+      if (!(await this.verify(session, g, entryId))) continue;
       const sections = note.parsed.sections;
       if (sections.length === 0) continue;
       let text = '';
@@ -601,11 +723,12 @@ export class KnowledgeBase {
         text = candidate;
         endLine = section.endLine;
       }
-      const hit = this.toHit(entryId, { heading: note.parsed.title, line: sections[0]!.line, endLine, text }, text.trim(), 0);
+      const hit = this.toHit(g, entryId, { heading: note.parsed.title, line: sections[0]!.line, endLine, text }, text.trim(), 0);
       if (!fit(hit)) return { project: config.name, excerpts, truncated: true };
     }
     if (topic !== undefined && topic.trim().length > 0) {
-      for (const hit of await this.search(topic, { limit: CONTEXT_TOPIC_HITS })) {
+      if (topic.length > config.limits.maxQueryChars) throw new VaultError('INVALID_QUERY', `Topic exceeds maxQueryChars (${config.limits.maxQueryChars})`);
+      for (const hit of await this.searchWith(g, topic, CONTEXT_TOPIC_HITS, undefined, session)) {
         if (!fit(hit)) break;
       }
     }
@@ -618,7 +741,7 @@ export class KnowledgeBase {
     await this.refresh(true);
     const g = this.generation;
     const diagnostics: Diagnostic[] = g.diagnostics.map((d) => ({ ...d }));
-    const resolved = await this.resolveAllLinks();
+    const resolved = await this.resolveAllLinks(g);
     for (const [noteId, links] of resolved) {
       for (const link of links) {
         if (link.status === 'broken') diagnostics.push({ code: 'LINK_BROKEN', noteId, message: `Link on line ${link.line} does not resolve to a note` });

@@ -14,11 +14,12 @@ import { VaultError } from '../core/errors.js';
 import { KnowledgeBase } from '../core/knowledge.js';
 import { writeNote } from '../core/writes.js';
 import { getTemplate } from '../core/templates.js';
+import { RequestSecurity, type AuditSink } from './security.js';
 
 export const SERVER_NAME = 'project-vault';
-export const SERVER_VERSION = '0.1.0';
+export const SERVER_VERSION = '0.2.0';
 
-export interface ServerOptions { allowWrite?: boolean }
+export interface ServerOptions { allowWrite?: boolean; auditSink?: AuditSink }
 
 const NOTE_ID_MAX = 512;
 const MAX_LIMIT = 50;
@@ -71,13 +72,14 @@ function fail(error: unknown): ToolResult {
 export function createServer(project: Project, options: ServerOptions = {}): McpServer {
   const limits = project.config.limits;
   const kb = new KnowledgeBase(project);
+  const security = new RequestSecurity(project, options.auditSink);
   const server = new McpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
     { maxToolInputElements: 64, instructions: `Project Vault for "${project.config.name}". Note IDs look like rootId/relative/path.md. ${UNTRUSTED}` }
   );
   const noteId = z.string().min(1).max(NOTE_ID_MAX).describe('Note id in the form rootId/relative/path.md');
-  const guarded = (fn: () => Promise<Record<string, unknown>>) => async (): Promise<ToolResult> => {
-    try { return ok(await fn(), limits.maxResponseChars); } catch (e) { return fail(e); }
+  const guarded = (tool: string, fn: () => Promise<Record<string, unknown>>) => async (): Promise<ToolResult> => {
+    try { return await security.run(tool, async () => ok(await fn(), limits.maxResponseChars)); } catch (e) { return fail(e); }
   };
 
   server.registerTool('search_notes', {
@@ -90,7 +92,7 @@ export function createServer(project: Project, options: ServerOptions = {}): Mcp
     }),
     outputSchema: looseObject,
     annotations: { ...readOnly, title: 'Search notes' }
-  }, async ({ query, limit, type }) => guarded(async () => {
+  }, async ({ query, limit, type }) => guarded('search_notes', async () => {
     await kb.refresh();
     const hits = await kb.search(query, { ...(limit !== undefined ? { limit } : {}), ...(type !== undefined ? { type } : {}) });
     return { query, hits };
@@ -106,7 +108,7 @@ export function createServer(project: Project, options: ServerOptions = {}): Mcp
     }),
     outputSchema: looseObject,
     annotations: { ...readOnly, title: 'Read note' }
-  }, async ({ note_id, start_line, line_count }) => guarded(async () => {
+  }, async ({ note_id, start_line, line_count }) => guarded('read_note', async () => {
     await kb.refresh();
     return toRecord(await kb.read(note_id, start_line, line_count));
   })());
@@ -117,7 +119,7 @@ export function createServer(project: Project, options: ServerOptions = {}): Mcp
     inputSchema: z.object({ note_id: noteId }),
     outputSchema: looseObject,
     annotations: { ...readOnly, title: 'Get note links' }
-  }, async ({ note_id }) => guarded(async () => {
+  }, async ({ note_id }) => guarded('get_note_links', async () => {
     await kb.refresh();
     return { noteId: note_id, ...toRecord(await kb.links(note_id)) };
   })());
@@ -131,7 +133,7 @@ export function createServer(project: Project, options: ServerOptions = {}): Mcp
     }),
     outputSchema: looseObject,
     annotations: { ...readOnly, title: 'Get project context' }
-  }, async ({ topic, max_chars }) => guarded(async () => {
+  }, async ({ topic, max_chars }) => guarded('get_project_context', async () => {
     await kb.refresh();
     return toRecord(await kb.context(topic, max_chars));
   })());
@@ -142,7 +144,7 @@ export function createServer(project: Project, options: ServerOptions = {}): Mcp
     inputSchema: z.object({}),
     outputSchema: looseObject,
     annotations: { ...readOnly, title: 'Get knowledge status' }
-  }, async () => guarded(async () => {
+  }, async () => guarded('get_knowledge_status', async () => {
     await kb.refresh();
     return toRecord(kb.status());
   })());
@@ -153,7 +155,7 @@ export function createServer(project: Project, options: ServerOptions = {}): Mcp
     inputSchema: z.object({ type: z.enum(TEMPLATE_TYPES).describe('Template type') }),
     outputSchema: looseObject,
     annotations: { ...readOnly, title: 'Get note template' }
-  }, async ({ type }) => guarded(async () => ({ type, template: getTemplate(type) }))());
+  }, async ({ type }) => guarded('get_note_template', async () => ({ type, template: getTemplate(type) }))());
 
   if (project.config.allowWrites === true && options.allowWrite === true) {
     const content = z.string().min(1).max(limits.maxFileBytes).describe('Complete Markdown content of the note');
@@ -165,7 +167,9 @@ export function createServer(project: Project, options: ServerOptions = {}): Mcp
       inputSchema: z.object({ note_id: noteId, content, apply }),
       outputSchema: looseObject,
       annotations: { title: 'Create note', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
-    }, async ({ note_id, content: body, apply: doApply }) => guarded(async () => {
+    }, async ({ note_id, content: body, apply: doApply }) => guarded('create_note', async () => {
+      // Ensure the acknowledgement can fit before changing durable state.
+      ok({ noteId: note_id, applied: false, created: true, previousRevision: null, revision: '0'.repeat(64), bytes: limits.maxFileBytes }, limits.maxResponseChars);
       const result = await writeNote(project, note_id, body, { expectedRevision: null, dryRun: doApply !== true });
       if (result.applied) await kb.refresh(true);
       return toRecord(result);
@@ -182,7 +186,8 @@ export function createServer(project: Project, options: ServerOptions = {}): Mcp
       }),
       outputSchema: looseObject,
       annotations: { title: 'Update note', readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }
-    }, async ({ note_id, content: body, expected_revision, apply: doApply }) => guarded(async () => {
+    }, async ({ note_id, content: body, expected_revision, apply: doApply }) => guarded('update_note', async () => {
+      ok({ noteId: note_id, applied: false, created: false, previousRevision: expected_revision, revision: '0'.repeat(64), bytes: limits.maxFileBytes }, limits.maxResponseChars);
       const result = await writeNote(project, note_id, body, { expectedRevision: expected_revision, dryRun: doApply !== true });
       if (result.applied) await kb.refresh(true);
       return toRecord(result);

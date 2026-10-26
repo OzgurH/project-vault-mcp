@@ -1,4 +1,5 @@
 import { promises as fs } from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { z } from 'zod';
 import { VaultError } from './errors.js';
@@ -16,7 +17,11 @@ const DEFAULT_LIMITS: Limits = {
   maxResponseChars: 20000,
   maxQueryChars: 500,
   rescanIntervalMs: 1000,
+  maxDirectoryEntries: 50000,
+  maxDepth: 32,
+  maxLinksPerNote: 2048,
 };
+export const DEFAULT_SECURITY = { audit: true, maxConcurrentRequests: 4, maxRequestsPerMinute: 120, blockSecrets: true };
 
 /** Root identifiers: lowercase ASCII letters, digits, '-' and '_' (no separators, no dots). */
 const ROOT_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
@@ -32,6 +37,7 @@ export function defaultConfig(name = 'project'): VaultConfig {
     searchLocale: 'default',
     allowWrites: false,
     limits: { ...DEFAULT_LIMITS },
+    security: { ...DEFAULT_SECURITY },
   };
 }
 
@@ -45,6 +51,9 @@ const limitsSchema = z
     maxResponseChars: bounded(100, 5_000_000),
     maxQueryChars: bounded(1, 100_000),
     rescanIntervalMs: bounded(0, 86_400_000),
+    maxDirectoryEntries: bounded(1, 1_000_000),
+    maxDepth: bounded(1, 128),
+    maxLinksPerNote: bounded(1, 10000),
   })
   .partial()
   .strict();
@@ -68,6 +77,7 @@ const configSchema = z
     searchLocale: z.enum(['default', 'tr']).optional(),
     allowWrites: z.boolean().optional(),
     limits: limitsSchema.optional(),
+    security: z.object({ audit: z.boolean().optional(), maxConcurrentRequests: bounded(1, 32).optional(), maxRequestsPerMinute: bounded(1, 10000).optional(), blockSecrets: z.boolean().optional() }).strict().optional(),
   })
   .strict();
 
@@ -177,7 +187,7 @@ export async function loadProject(rootOrConfig: string): Promise<Project> {
   try {
     parsedJson = JSON.parse(text);
   } catch (error) {
-    throw invalid(`configuration file is not valid JSON (${(error as Error).message})`);
+    throw invalid('configuration file is not valid JSON');
   }
   if (typeof parsedJson !== 'object' || parsedJson === null || Array.isArray(parsedJson)) {
     throw invalid('configuration must be a JSON object');
@@ -197,6 +207,7 @@ export async function loadProject(rootOrConfig: string): Promise<Project> {
     searchLocale: data.searchLocale ?? 'default',
     allowWrites: data.allowWrites ?? false,
     limits: { ...DEFAULT_LIMITS, ...(data.limits ?? {}) },
+    security: { ...DEFAULT_SECURITY, ...(data.security ?? {}) },
   };
 
   const notesIds = new Set<string>();
@@ -226,5 +237,5 @@ export async function loadProject(rootOrConfig: string): Promise<Project> {
     if (pattern.includes('\u0000')) throw invalid('exclude patterns must not contain NUL characters');
   }
 
-  return { root: projectRoot, configPath, config };
+  return { root: projectRoot, configPath, config, configRevision: createHash('sha256').update(raw).digest('hex') };
 }

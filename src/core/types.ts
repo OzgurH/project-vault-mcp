@@ -8,7 +8,11 @@ export interface Limits {
   maxResponseChars: number;
   maxQueryChars: number;
   rescanIntervalMs: number;
+  maxDirectoryEntries?: number;
+  maxDepth?: number;
+  maxLinksPerNote?: number;
 }
+export interface SecurityPolicy { audit: boolean; maxConcurrentRequests: number; maxRequestsPerMinute: number; blockSecrets?: boolean }
 export interface VaultConfig {
   schemaVersion: 1;
   name: string;
@@ -19,8 +23,9 @@ export interface VaultConfig {
   searchLocale: 'default' | 'tr';
   allowWrites: boolean;
   limits: Limits;
+  security?: SecurityPolicy;
 }
-export interface Project { root: string; configPath: string; config: VaultConfig }
+export interface Project { root: string; configPath: string; config: VaultConfig; configRevision?: string }
 export interface NoteFile { noteId: string; content: string; revision: string; bytes: number }
 export interface Diagnostic { code: string; noteId?: string; message: string }
 export interface NoteLink { target: string; line: number; embed: boolean }

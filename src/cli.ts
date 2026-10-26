@@ -79,7 +79,7 @@ async function serve(root: string, allowWrite: boolean): Promise<number> {
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
   await server.connect(transport);
-  err(`project-vault serving "${project.config.name}" from ${project.configPath}${allowWrite ? ' with writes enabled' : ' read-only'}\n`);
+  err(`project-vault serving over stdio${allowWrite && project.config.allowWrites ? ' with writes enabled' : ' read-only'}\n`);
   await closed;
   process.off('SIGINT', stop);
   process.off('SIGTERM', stop);
@@ -150,7 +150,7 @@ export async function main(args: string[]): Promise<number> {
   } catch (e) {
     if (e instanceof UsageError) { err(`error: ${e.message}\n\n${USAGE}`); return 2; }
     if (e instanceof VaultError) { err(`error [${e.code}]: ${e.message}\n`); return 1; }
-    err(`error: ${e instanceof Error ? e.message : 'unexpected failure'}\n`); return 1;
+    err('error: unexpected internal failure\n'); return 1;
   }
 }
 
@@ -161,5 +161,5 @@ function isEntryPoint(): boolean {
 }
 
 if (isEntryPoint()) {
-  main(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (e: unknown) => { err(`error: ${e instanceof Error ? e.message : String(e)}\n`); process.exitCode = 1; });
+  main(process.argv.slice(2)).then((code) => { process.exitCode = code; }, () => { err('error: unexpected internal failure\n'); process.exitCode = 1; });
 }

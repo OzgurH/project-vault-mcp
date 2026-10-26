@@ -1,6 +1,6 @@
 {
   "name": "project-vault-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Local-first architecture knowledge for any project. Search, link, create and update Markdown notes through MCP.",
   "type": "module",
   "license": "MIT",

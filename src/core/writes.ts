@@ -3,8 +3,10 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { VaultError } from './errors.js';
+import { PRIVATE_DIR_MODE, PRIVATE_FILE_MODE, applyFileSecurity, captureFileSecurity, verifyBeforeReplace, type FileSecurity } from './file-security.js';
 import { decodeNoteBytes, isPrivateFrontmatter, normalizeText, parseFrontmatter, readBoundedBytes, sha256Hex } from './files.js';
 import { resolveNote } from './paths.js';
+import { assertContentPolicy } from './content-policy.js';
 import type { Project, WriteOptions, WriteResult } from './types.js';
 
 /**
@@ -49,12 +51,17 @@ interface Lock { release: () => Promise<void> }
  * and renaming the pathname is not transactional with another waiter's replacement.
  */
 async function acquireLock(lockPath: string, noteId: string): Promise<Lock> {
-  await fs.mkdir(path.dirname(lockPath), { recursive: true });
+  try {
+    await fs.mkdir(path.dirname(lockPath), { recursive: true, mode: PRIVATE_DIR_MODE });
+  } catch (error) {
+    throw new VaultError('IO_ERROR', `Failed to create lock directory (${ioCode(error)})`);
+  }
   const deadline = Date.now() + lockTimeoutMs();
   for (;;) {
     try {
-      const handle = await fs.open(lockPath, 'wx');
-      await handle.writeFile(JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString(), noteId }), 'utf8');
+      const handle = await fs.open(lockPath, 'wx', PRIVATE_FILE_MODE);
+      // The lock names only its owner; note identifiers never leave the project directory.
+      await handle.writeFile(JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }), 'utf8');
       return {
         release: async () => {
           await handle.close().catch(() => undefined);
@@ -98,6 +105,7 @@ function validateContent(project: Project, content: unknown): string {
   if (content.includes('\u0000')) throw new VaultError('INVALID_CONTENT', 'Note content must not contain NUL characters');
   if (LONE_SURROGATE.test(content)) throw new VaultError('INVALID_CONTENT', 'Note content must be well-formed Unicode text');
   const normalized = normalizeText(content);
+  assertContentPolicy(project, normalized);
   if (Buffer.byteLength(normalized, 'utf8') > project.config.limits.maxFileBytes) {
     throw new VaultError('CONTENT_TOO_LARGE', `Note content exceeds maxFileBytes (${project.config.limits.maxFileBytes})`);
   }
@@ -126,17 +134,21 @@ function checkPrecondition(noteId: string, expectedRevision: string | null, exis
   }
 }
 
-async function writeTemp(tempPath: string, bytes: Buffer): Promise<void> {
-  const handle = await fs.open(tempPath, 'wx');
+/** Creates the staging file exclusively with owner-only permissions; the caller owns the handle. */
+async function openTemp(tempPath: string): Promise<fs.FileHandle> {
+  try {
+    return await fs.open(tempPath, 'wx', PRIVATE_FILE_MODE);
+  } catch (error) {
+    throw new VaultError('IO_ERROR', `Failed to create temporary note file (${ioCode(error)})`);
+  }
+}
+
+async function flushTemp(handle: fs.FileHandle, bytes: Buffer): Promise<void> {
   try {
     await handle.writeFile(bytes);
     await handle.sync();
   } catch (error) {
-    await handle.close().catch(() => undefined);
-    await fs.unlink(tempPath).catch(() => undefined);
-    throw error;
-  } finally {
-    await handle.close().catch(() => undefined);
+    throw new VaultError('IO_ERROR', `Failed to write temporary note file (${ioCode(error)})`);
   }
 }
 
@@ -170,7 +182,7 @@ async function createExclusively(tempPath: string, targetPath: string): Promise<
   // Filesystems without hard links: exclusive create, then remove the partial target on failure.
   let handle;
   try {
-    handle = await fs.open(targetPath, 'wx');
+    handle = await fs.open(targetPath, 'wx', PRIVATE_FILE_MODE);
   } catch (error) {
     const code = ioCode(error);
     if (code === 'EEXIST') throw new VaultError('NOTE_EXISTS', 'Note was created concurrently; re-read and retry with an update');
@@ -192,6 +204,11 @@ async function createExclusively(tempPath: string, targetPath: string): Promise<
  * a note. dryRun defaults to true and touches nothing on disk. Applied writes serialize through an
  * exclusive lock outside the vault, re-read the target inside the lock, re-check the revision and
  * replace the file through a same-directory temp file. Nothing is ever truncated in place.
+ *
+ * Security metadata: staging files, lock files and newly created notes are owner-only (0600) on
+ * POSIX; lock directories are 0700. Updates preserve the existing note's mode, owner and group
+ * (POSIX) or owner, group and DACL (Windows) on the replacement and fail closed with
+ * SECURITY_METADATA when that cannot be verified. New notes on Windows inherit the folder ACL.
  */
 export async function writeNote(project: Project, noteId: string, content: string, options: WriteOptions): Promise<WriteResult> {
   if (!project.config.allowWrites) {
@@ -226,21 +243,31 @@ export async function writeNote(project: Project, noteId: string, content: strin
   const lock = await acquireLock(lockPathFor(targetPath), noteId);
   const tempPath = path.join(path.dirname(targetPath), `.${path.basename(targetPath)}.pv-tmp-${process.pid}-${randomBytes(6).toString('hex')}`);
   let tempCreated = false;
+  let tempHandle: fs.FileHandle | null = null;
   try {
     // Re-resolve and re-read inside the lock so the revision check reflects the latest bytes.
     await resolveNote(project, noteId, isCreate);
     const existing = await readExisting(targetPath, project, noteId);
     checkPrecondition(noteId, expectedRevision, existing);
     const bytes = encodeOutput(normalized, existing, project.config.limits.maxFileBytes);
-    try {
-      await writeTemp(tempPath, bytes);
-      tempCreated = true;
-    } catch (error) {
-      throw new VaultError('IO_ERROR', `Failed to write temporary note file (${ioCode(error)})`);
-    }
+    // An update must not widen access: capture the note's security metadata before staging anything.
+    const security: FileSecurity | null = existing ? await captureFileSecurity(targetPath) : null;
+    tempHandle = await openTemp(tempPath);
+    tempCreated = true;
+    // Windows ACLs are inherited from the folder at creation; restore the note's own DACL before
+    // any note bytes reach the staging file. POSIX staging stays owner-only until just before install.
+    if (security?.kind === 'windows') await applyFileSecurity(tempHandle, tempPath, security);
+    await flushTemp(tempHandle, bytes);
     // Flushing the replacement may take time; detect editor saves observed after that flush too.
     await resolveNote(project, noteId, isCreate);
     checkPrecondition(noteId, expectedRevision, await readExisting(targetPath, project, noteId));
+    if (security) {
+      if (security.kind === 'posix') await applyFileSecurity(tempHandle, tempPath, security);
+      // Revalidate like the revision: staging must carry the metadata and the target must not have changed.
+      await verifyBeforeReplace(tempPath, targetPath, security, tempHandle);
+    }
+    await tempHandle.close();
+    tempHandle = null;
     if (existing) {
       await replaceWithRetries(tempPath, targetPath);
       tempCreated = false;
@@ -256,6 +283,7 @@ export async function writeNote(project: Project, noteId: string, content: strin
       bytes: bytes.length,
     };
   } finally {
+    if (tempHandle) await tempHandle.close().catch(() => undefined);
     if (tempCreated) await fs.unlink(tempPath).catch(() => undefined);
     await lock.release();
   }

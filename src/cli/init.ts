@@ -103,14 +103,14 @@ export async function initProject(root: string, apply = false): Promise<InitResu
   const created: string[] = [];
   const failure = (code: string, message: string) => new InitError(code, message, created);
   if (rootState === 'missing') {
-    try { await mkdir(rootAbs); } catch (e) {
+    try { await mkdir(rootAbs, { mode: 0o700 }); } catch (e) {
       const code = (e as NodeJS.ErrnoException).code;
       throw failure('INIT_ROOT_CREATE_FAILED', code === 'ENOENT' ? 'The parent of the target root does not exist; only the explicitly supplied root is created.' : 'The target root could not be created.');
     }
     created.push('.');
   }
   for (const rel of dirsToCreate) {
-    try { await mkdir(path.join(rootAbs, rel)); } catch (e) {
+    try { await mkdir(path.join(rootAbs, rel), { mode: 0o700 }); } catch (e) {
       if ((e as NodeJS.ErrnoException).code === 'EEXIST') { existing.push(rel); continue; }
       throw failure('INIT_DIR_CREATE_FAILED', `Directory "${rel}" could not be created.`);
     }
@@ -121,7 +121,7 @@ export async function initProject(root: string, apply = false): Promise<InitResu
     if ((await presence(path.dirname(target))) !== 'dir') throw failure('INIT_SYMLINK', `The parent of "${rel}" is not a plain directory; refusing to write through it.`);
     let content: string;
     try { content = files[rel]!(); } catch { throw failure('INIT_TEMPLATE_FAILED', `The template for "${rel}" is unavailable.`); }
-    try { await writeFile(target, content, { encoding: 'utf8', flag: 'wx' }); } catch (e) {
+    try { await writeFile(target, content, { encoding: 'utf8', flag: 'wx', mode: 0o600 }); } catch (e) {
       if ((e as NodeJS.ErrnoException).code === 'EEXIST') { existing.push(rel); continue; }
       throw failure('INIT_FILE_CREATE_FAILED', `File "${rel}" could not be created.`);
     }

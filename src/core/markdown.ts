@@ -4,7 +4,8 @@
  * Produces a ParsedNote from raw note content: YAML frontmatter (safe schema,
  * bounded aliases), headings with GitHub slugs, heading-sized sections with
  * real 1-based line numbers, Markdown links and Obsidian wikilinks (text
- * nodes only, never inside code), and declared source references.
+ * nodes only, never inside code or raw HTML), and declared source references.
+ * Link extraction is linear in the note size and capped per note.
  */
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
@@ -18,6 +19,17 @@ import type { NoteLink, ParsedNote, Section, SourceReference } from './types.js'
 export const MAX_SECTION_LINES = 60;
 /** Upper bound for YAML alias expansion while parsing frontmatter. */
 const MAX_YAML_ALIASES = 32;
+/** Default per-note link cap (mirrors the `maxLinksPerNote` limit default). */
+export const DEFAULT_MAX_LINKS_PER_NOTE = 2048;
+/** Link targets longer than a note id can ever be are dropped instead of copied around. */
+export const MAX_LINK_TARGET_CHARS = 1024;
+/** A note may contain at most maxLinks x this many "[" characters before parsing is refused. */
+export const LINK_OPENER_BUDGET_FACTOR = 4;
+
+export interface ParseNoteOptions {
+  /** Maximum number of links (Markdown links, definitions, images and wikilinks) a note may declare. */
+  maxLinks?: number;
+}
 
 const processor = unified().use(remarkParse);
 
@@ -102,43 +114,129 @@ function phrasingText(nodes: PhrasingContent[]): string {
   return out;
 }
 
-const WIKILINK = /(!?)\[\[([^\]\n]+?)\]\]/g;
+/** Collects links with a hard per-note cap; exceeding it is an error, never a partial list. */
+class LinkCollector {
+  readonly links: NoteLink[] = [];
+  constructor(private readonly maxLinks: number) {}
 
-function wikilinksInText(value: string, startLine: number, out: NoteLink[]): void {
-  WIKILINK.lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = WIKILINK.exec(value)) !== null) {
-    const inner = match[2] ?? '';
-    const target = inner.split('|')[0]?.trim() ?? '';
-    if (target.length === 0) continue;
-    let line = startLine;
-    for (let i = 0; i < match.index; i++) if (value.charCodeAt(i) === 10) line++;
-    out.push({ target, line, embed: match[1] === '!' });
+  push(target: string, line: number, embed: boolean): void {
+    if (target.length === 0 || target.length > MAX_LINK_TARGET_CHARS) return;
+    if (this.links.length >= this.maxLinks) {
+      throw new VaultError('LIMIT_EXCEEDED', `Note contains more than maxLinksPerNote (${this.maxLinks}) links`);
+    }
+    this.links.push({ target, line, embed });
   }
 }
 
-function collectLinks(node: RootContent | Root, offset: number, out: NoteLink[]): void {
-  const line = (node.position?.start.line ?? 1) + offset;
-  switch (node.type) {
-    case 'code':
-    case 'inlineCode':
-    case 'html':
-      return;
-    case 'text':
-      wikilinksInText(node.value, line, out);
-      return;
-    case 'link':
-    case 'definition':
-      if (node.url.length > 0) out.push({ target: node.url, line, embed: false });
-      break;
-    case 'image':
-      if (node.url.length > 0) out.push({ target: node.url, line, embed: true });
-      return;
-    default:
-      break;
+const CH_NEWLINE = 10;
+const CH_BANG = 33;
+const CH_OPEN = 91; // [
+const CH_CLOSE = 93; // ]
+
+/**
+ * Single forward pass over a text node. Every character is visited a bounded number of times:
+ * an opener whose line ends (or hits a lone "]") before "]]" cannot be rescued by any later opener
+ * on the same stretch, so scanning resumes after the failure point instead of one character later.
+ * Line numbers are counted incrementally while advancing, never by re-scanning the prefix.
+ */
+export function scanWikilinks(value: string, startLine: number, maxLinks: number = DEFAULT_MAX_LINKS_PER_NOTE): NoteLink[] {
+  const collector = new LinkCollector(maxLinks);
+  wikilinksInText(value, startLine, collector);
+  return collector.links;
+}
+
+/**
+ * The Markdown parser's bracket matching is superlinear on adversarial input (a 1 MiB flood of
+ * "[[x]]" or "[[a]" takes minutes). Count "[" in one linear pass and refuse notes whose link syntax
+ * exceeds a conservative structural budget, before the parser ever sees them.
+ */
+function assertLinkSyntaxBudget(body: string, maxLinks: number): void {
+  const budget = Math.max(1, maxLinks) * LINK_OPENER_BUDGET_FACTOR;
+  let openers = 0;
+  let index = body.indexOf('[');
+  while (index !== -1) {
+    openers++;
+    if (openers > budget) {
+      throw new VaultError(
+        'LIMIT_EXCEEDED',
+        `Note contains more than ${budget} link opening brackets (maxLinksPerNote ${maxLinks} x ${LINK_OPENER_BUDGET_FACTOR}) and was not parsed`,
+      );
+    }
+    index = body.indexOf('[', index + 1);
   }
-  if ('children' in node) {
-    for (const child of node.children as RootContent[]) collectLinks(child, offset, out);
+}
+
+function wikilinksInText(value: string, startLine: number, out: LinkCollector): void {
+  const length = value.length;
+  let line = startLine;
+  let pos = 0;
+  while (pos < length) {
+    const code = value.charCodeAt(pos);
+    if (code === CH_NEWLINE) {
+      line++;
+      pos++;
+      continue;
+    }
+    if (code !== CH_OPEN || value.charCodeAt(pos + 1) !== CH_OPEN) {
+      pos++;
+      continue;
+    }
+    // Candidate opener at pos. Find the first "]" or newline after it.
+    let end = pos + 2;
+    while (end < length) {
+      const c = value.charCodeAt(end);
+      if (c === CH_CLOSE || c === CH_NEWLINE) break;
+      end++;
+    }
+    if (end >= length) return; // No closer anywhere ahead; the rest of the node has no wikilinks.
+    if (value.charCodeAt(end) === CH_NEWLINE) {
+      // Every opener before this newline fails the same way; continue on the next line.
+      pos = end;
+      continue;
+    }
+    const closes = value.charCodeAt(end + 1) === CH_CLOSE && end > pos + 2;
+    if (!closes) {
+      // Lone "]" (or empty "[[]]"): no opener between pos and end can succeed either.
+      pos = end + 1;
+      continue;
+    }
+    const inner = value.slice(pos + 2, end);
+    const pipe = inner.indexOf('|');
+    const target = (pipe === -1 ? inner : inner.slice(0, pipe)).trim();
+    const embed = pos > 0 && value.charCodeAt(pos - 1) === CH_BANG;
+    out.push(target, line, embed);
+    pos = end + 2;
+  }
+}
+
+/** Iterative tree walk (no recursion depth to attack) that skips code and raw HTML. */
+function collectLinks(root: Root, offset: number, out: LinkCollector): void {
+  const stack: (RootContent | Root)[] = [root];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    const line = (node.position?.start.line ?? 1) + offset;
+    switch (node.type) {
+      case 'code':
+      case 'inlineCode':
+      case 'html':
+        continue;
+      case 'text':
+        wikilinksInText(node.value, line, out);
+        continue;
+      case 'link':
+      case 'definition':
+        out.push(node.url, line, false);
+        break;
+      case 'image':
+        out.push(node.url, line, true);
+        continue;
+      default:
+        break;
+    }
+    if ('children' in node) {
+      const children = node.children as RootContent[];
+      for (let i = children.length - 1; i >= 0; i--) stack.push(children[i]!);
+    }
   }
 }
 
@@ -152,14 +250,28 @@ function pushSection(sections: Section[], heading: string, line: number, endLine
   }
 }
 
-/** Parse raw note content (any newline style) into a ParsedNote. */
-export function parseNote(content: string): ParsedNote {
+function resolveMaxLinks(options: ParseNoteOptions | undefined): number {
+  const value = options?.maxLinks;
+  if (value === undefined) return DEFAULT_MAX_LINKS_PER_NOTE;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+    throw new VaultError('INVALID_ARGUMENT', 'maxLinks must be a non-negative integer');
+  }
+  return value;
+}
+
+/**
+ * Parse raw note content (any newline style) into a ParsedNote. Throws LIMIT_EXCEEDED when the
+ * note declares more than `maxLinks` links (default 2048); no partial link list is returned.
+ */
+export function parseNote(content: string, options?: ParseNoteOptions): ParsedNote {
+  const maxLinks = resolveMaxLinks(options);
   let normalized = content.replace(/\r\n?/g, '\n');
   if (normalized.charCodeAt(0) === 0xfeff) normalized = normalized.slice(1);
   const allLines = normalized.split('\n');
   const { metadata, lineCount: offset } = parseFrontmatter(allLines);
   const bodyLines = allLines.slice(offset);
   const body = bodyLines.join('\n');
+  assertLinkSyntaxBudget(body, maxLinks);
   const tree = processor.parse(body) as Root;
 
   const slugger = new GithubSlugger();
@@ -187,8 +299,9 @@ export function parseNote(content: string): ParsedNote {
     pushSection(sections, current.text, current.line, endLine, bodyLines, offset);
   }
 
-  const links: NoteLink[] = [];
-  collectLinks(tree, offset, links);
+  const collector = new LinkCollector(maxLinks);
+  collectLinks(tree, offset, collector);
+  const links: NoteLink[] = collector.links;
   links.sort((a, b) => a.line - b.line);
 
   const firstH1 = headingNodes.find((h) => h.node.depth === 1);

@@ -6,6 +6,10 @@ status: active
 
 - [Architecture](architecture.md)
 - [Configuration](configuration.md)
+- [Security controls: OWASP and zero trust](security-controls.md)
+- [Privacy: GDPR and KVKK responsibilities](privacy.md)
+- [Threat model](threat-model.md)
+- [Security operations](security-operations.md)
 - [Local Markdown and stdio decision](decisions/0001-local-markdown-and-stdio.md)
 - [Design](design.md)
 

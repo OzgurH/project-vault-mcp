@@ -8,10 +8,12 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![MCP](https://img.shields.io/badge/MCP-stdio-7c8cff)](https://modelcontextprotocol.io/)
 [![Obsidian compatible](https://img.shields.io/badge/Obsidian-compatible-8b5cf6?logo=obsidian&logoColor=white)](https://obsidian.md/)
+[![Security checks](https://github.com/OzgurH/project-vault-mcp/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/OzgurH/project-vault-mcp/actions/workflows/security.yml)
+[![OWASP controls](https://img.shields.io/badge/OWASP_2025-control_map-145a62)](docs/security-controls.md)
 
 **Give your agents a project memory you can read, edit, and keep in Git.**
 
-[Quick start](#quick-start) · [Connect your agent](#connect-your-agent) · [Tools](#mcp-tools) · [Safe updates](#creating-and-updating-notes) · [Architecture](docs/architecture.md) · [Contributing](CONTRIBUTING.md)
+[Quick start](#quick-start) · [Connect your agent](#connect-your-agent) · [Tools](#mcp-tools) · [Safe updates](#creating-and-updating-notes) · [Security](docs/security-controls.md) · [Privacy](docs/privacy.md) · [Contributing](CONTRIBUTING.md)
 
 </div>
 
@@ -78,10 +80,10 @@ Already have notes? Add a configuration pointing at them; no conversion is requi
 <details>
 <summary><strong>Install the GitHub release package</strong></summary>
 
-Download `project-vault-mcp-0.1.0.tgz` from the [GitHub release](https://github.com/OzgurH/project-vault-mcp/releases), then:
+Download `project-vault-mcp-0.2.0.tgz` from the [GitHub release](https://github.com/OzgurH/project-vault-mcp/releases), then:
 
 ```sh
-npm install --global ./project-vault-mcp-0.1.0.tgz
+npm install --global ./project-vault-mcp-0.2.0.tgz
 project-vault --help
 project-vault init --root ../my-project --apply
 ```
@@ -210,6 +212,10 @@ No HTTP port. No required Obsidian plugin. No database to migrate. No embedding 
 - [Configuration and limits](docs/configuration.md)
 - [Example knowledge layer](examples/web-service/)
 - [Security model and disclosure](SECURITY.md)
+- [OWASP 2025 and zero-trust control map](docs/security-controls.md)
+- [Privacy, GDPR and KVKK responsibilities](docs/privacy.md)
+- [Threat model](docs/threat-model.md)
+- [Security operations and retention](docs/security-operations.md)
 - [Contributing and development](CONTRIBUTING.md)
 - [Design decisions](docs/decisions/0001-local-markdown-and-stdio.md)
 

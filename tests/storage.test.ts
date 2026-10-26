@@ -74,7 +74,11 @@ describe('defaultConfig', () => {
         maxResponseChars: 20000,
         maxQueryChars: 500,
         rescanIntervalMs: 1000,
+        maxDirectoryEntries: 50000,
+        maxDepth: 32,
+        maxLinksPerNote: 2048,
       },
+      security: { audit: true, blockSecrets: true, maxConcurrentRequests: 4, maxRequestsPerMinute: 120 },
     });
   });
 });
