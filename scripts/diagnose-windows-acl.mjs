@@ -23,9 +23,9 @@ async function probe(name, environment, direct) {
     "[Console]::Out.WriteLine('read')", `$null = $acl.GetSecurityDescriptorSddlForm(${sections})`,
     "[Console]::Out.WriteLine('done')"].join('\n');
   const start = performance.now();
-  await new Promise(resolve => {
+  return await new Promise(resolve => {
     const child = execFile(executable, ['-NoProfile', '-NonInteractive', '-NoLogo', '-Command', command],
-      { env: environment, timeout: 5000, maxBuffer: 4096, windowsHide: true, encoding: 'utf8' },
+      { env: environment, timeout: 20000, maxBuffer: 4096, windowsHide: true, encoding: 'utf8' },
       (error, stdout) => {
         const markers = stdout.split(/\r?\n/).filter(line => /^(started|constructed|read|done)$/.test(line));
         process.stdout.write(JSON.stringify({ probe: name, elapsedMs: Math.round(performance.now() - start),

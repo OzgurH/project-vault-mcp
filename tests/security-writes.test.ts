@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { promises as fs, realpathSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -194,6 +195,15 @@ describe.skipIf(isWindows)('POSIX permissions', () => {
 });
 
 describe.skipIf(!isWindows)('Windows DACL preservation', () => {
+  it('returns a successful exit code from the standalone ACL preflight', async () => {
+    const { stdout } = await promisify(execFile)(process.execPath, [path.resolve('scripts/diagnose-windows-acl.mjs')],
+      { timeout: 30000, windowsHide: true, encoding: 'utf8' });
+    const result = JSON.parse(stdout.trim());
+    expect(result.success).toBe(true);
+    expect(result.timedOut).toBe(false);
+    expect(result.markers).toEqual(['started', 'constructed', 'read', 'done']);
+  });
+
   it('replaces a note with a protected DACL without inheriting the folder ACL', async () => {
     const project = await setupProject();
     const target = path.join(projectDir, 'docs', 'index.md');
