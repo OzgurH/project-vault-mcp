@@ -47,4 +47,6 @@ node dist/src/cli.js check --root . --json
 
 CI runs behavioral tests on Windows, Linux and macOS with Node 22 and 24. POSIX permission and Windows DACL assertions execute on their relevant platforms. A platform-specific branch is not evidence for another operating system. See [configuration](configuration.md) for exact limits and [operations](security-operations.md) for response and retention procedures.
 
+Windows integration tests have a 90-second harness deadline to cover three ACL subprocesses with individual 20-second limits and runner overhead. This keeps teardown from deleting fixtures while a security operation is still running. Product subprocess limits and adversarial parser timing assertions remain unchanged.
+
 The 0.2.0 security review addressed three concrete 0.1.0 weaknesses: retained content after failed discovery (`security-retrieval.test.ts`), POSIX replacement-mode broadening (`security-writes.test.ts`) and quadratic wikilink processing (`security-content.test.ts`). Tests also cover privacy/expiry revocation, credential signatures, policy changes, admission limits and acknowledgement budgets. Windows owner/DACL grammar restrictions and POSIX extended-ACL exclusions remain explicit deployment limitations in the security policy.
