@@ -23,18 +23,16 @@ Project Vault MCP turns ordinary Markdown into a connected knowledge layer for a
 
 Your notes stay on your filesystem. Use Obsidian, VS Code, another editor, or plain Git. There is no proprietary vault format, hosted knowledge service, embedding bill, or application-framework dependency.
 
-## Why Project Vault?
+## What you gain
 
-A README explains how to start. Your architecture notes explain **why the project works this way**. Project Vault makes that second layer usable in day-to-day agent work.
-
-| Capability | What you get |
-| --- | --- |
-| **Find the right context** | Ranked, heading-aware search with file IDs, line numbers, and revision metadata. |
-| **Follow the architecture** | Markdown links, Obsidian wikilinks, backlinks, and explicit ambiguous-link diagnostics. |
-| **Capture the reasoning** | Starter notes for architecture, modules, ADRs, and runbooks. |
-| **Maintain notes through MCP** | Create and update tools with previews, explicit write gates, and revision checks. |
-| **Notice drift** | Optional source-file hashes flag changed evidence. A matching hash is not proof that an architectural claim is correct. |
-| **Bring your own project** | Adopt an existing notes directory or initialize a small knowledge layer. |
+- ⭐ **Spend less time re-explaining your project.** Keep architecture, conventions, and decisions in reusable notes that MCP-compatible agents can retrieve across sessions.
+- ⭐ **Find answers you can trace.** Search relevant note sections with file IDs, line numbers, and revision metadata so you can inspect the source behind an answer.
+- ⭐ **Understand how decisions connect.** Follow Markdown links, Obsidian wikilinks, and backlinks; find broken references and ambiguous note names.
+- ⭐ **Keep knowledge up to date while you work.** Create and update notes through MCP, preview changes first, and use revision checks to reject updates based on an older version.
+- ⭐ **Notice when implementation references change.** Compare optional recorded source-file hashes to flag changed files for review.
+- ⭐ **Keep control of your knowledge.** Store editable Markdown locally, manage it in Git, and limit agent access with configured roots, privacy labels, and explicit write permissions.
+- ⭐ **Use it with your existing project and editor.** Adopt an existing documentation folder or start with architecture, module, decision, and runbook templates; use Obsidian, VS Code, or another editor.
+- ⭐ **Avoid extra search infrastructure.** Retrieve project knowledge without an embedding service, a vector database, or a hosted knowledge platform.
 
 > **Local-first, with a clear boundary:** this server makes no model calls and sends no telemetry. Your MCP client can still send retrieved notes to its model provider. Only connect a project you intend that client to access.
 
