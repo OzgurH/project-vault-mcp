@@ -85,18 +85,23 @@ async function runPowerShell(env: Record<string, string>): Promise<string[]> {
     ...env,
   };
   return new Promise((resolve, reject) => {
-    execFile(
+    const child = execFile(
       powershellPath(),
       ['-NoProfile', '-NonInteractive', '-NoLogo', '-Command', POWERSHELL_SCRIPT],
       { env: childEnv, timeout: POWERSHELL_TIMEOUT_MS, maxBuffer: POWERSHELL_MAX_OUTPUT, windowsHide: true, encoding: 'utf8' },
       (error, stdout) => {
         if (error) {
-          reject(securityError('Windows file security could not be managed; the note was left unchanged'));
+          reject(securityError(error.killed
+            ? 'Windows file security helper exceeded its deadline; the note was left unchanged'
+            : 'Windows file security helper failed; the note was left unchanged'));
           return;
         }
         resolve(stdout.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0));
       },
     );
+    // No input is expected. Headless Windows PowerShell hosts can otherwise wait
+    // for EOF on the inherited pipe even after the fixed command has finished.
+    child.stdin?.end();
   });
 }
 
