@@ -51,4 +51,6 @@ Windows integration tests have a 90-second harness deadline to cover three ACL s
 
 The fixed Windows helper receives no stdin data; its input pipe is closed immediately so headless hosts receive EOF. ACL operations remain fail closed on a helper failure or deadline.
 
+`scripts/diagnose-windows-acl.mjs` compares fixed ACL operations with inherited/minimal child environments in Windows CI. It prints only phase markers and elapsed/outcome fields for a synthetic temporary file; no paths or security descriptors are logged.
+
 The 0.2.0 security review addressed three concrete 0.1.0 weaknesses: retained content after failed discovery (`security-retrieval.test.ts`), POSIX replacement-mode broadening (`security-writes.test.ts`) and quadratic wikilink processing (`security-content.test.ts`). Tests also cover privacy/expiry revocation, credential signatures, policy changes, admission limits and acknowledgement budgets. Windows owner/DACL grammar restrictions and POSIX extended-ACL exclusions remain explicit deployment limitations in the security policy.
