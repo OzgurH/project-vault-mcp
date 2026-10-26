@@ -30,13 +30,15 @@ async function probe(name, environment, direct) {
         const markers = stdout.split(/\r?\n/).filter(line => /^(started|constructed|read|done)$/.test(line));
         process.stdout.write(JSON.stringify({ probe: name, elapsedMs: Math.round(performance.now() - start),
           success: !error, timedOut: Boolean(error?.killed), markers }) + '\n');
-        resolve();
+        resolve(!error);
       });
     child.stdin?.end();
   });
 }
 try {
-  await probe('inherited-environment', { ...process.env, PV_PROBE_FILE: target }, false);
-  await probe('minimal-environment-cmdlet', minimal, false);
-  await probe('minimal-environment-native-constructor', minimal, true);
+  if (process.argv.includes('--compare-cmdlet')) {
+    await probe('inherited-environment', { ...process.env, PV_PROBE_FILE: target }, false);
+    await probe('minimal-environment-cmdlet', minimal, false);
+  }
+  if (!(await probe('minimal-environment-native-constructor', minimal, true))) process.exitCode = 1;
 } finally { await rm(root, { recursive: true, force: true }); }
