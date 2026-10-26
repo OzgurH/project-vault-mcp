@@ -37,9 +37,45 @@ Your notes stay on your filesystem. Use Obsidian, VS Code, another editor, or pl
 - ⭐ **Use it with your existing project and editor.** Adopt an existing documentation folder or start with architecture, module, decision, and runbook templates; use Obsidian, VS Code, or another editor.
 - ⭐ **Avoid extra search infrastructure.** Retrieve project knowledge without an embedding service, a vector database, or a hosted knowledge platform.
 
-Token savings depend on the client, retrieval choices, and workload; no savings percentage has been benchmarked. Focused retrieval does not increase a model's context limit or guarantee correct reasoning.
+Token savings depend on the client, retrieval choices, and workload. Focused retrieval does not increase a model's context limit or guarantee correct reasoning.
 
 > **Local-first, with a clear boundary:** this server makes no model calls and sends no telemetry. Your MCP client can still send retrieved notes to its model provider. Only connect a project you intend that client to access.
+
+## Without MCP vs. With MCP
+
+A local experiment on **October 26, 2026** compared five independent questions over this project's **nine accessible documentation notes**. These are counted context tokens, not API billing or model-quality results.
+
+| Approach | Context supplied per question | Total tokens across five questions | Reduction vs. all notes |
+| --- | --- | ---: | ---: |
+| **Without MCP** | Load all nine notes | 35,421 | Baseline |
+| **With MCP — search only** | Top three `search_notes` hits | 10,338 | **70.8%** |
+| **With MCP — search + read** | Top three hits, then read the highest-ranked note in full | 22,501 | **36.5%** |
+
+**The search + read strategy used 36.5% fewer counted tokens than loading all notes in this experiment.** Search alone used fewer tokens but omitted some checked details. Neither comparison establishes equivalent answer quality.
+
+<details>
+<summary><strong>Measurement method, evidence checks, and limitations</strong></summary>
+
+- **Snapshot:** [source revision `842e635`](https://github.com/OzgurH/project-vault-mcp/tree/842e6353f1c2af363dc4c33caea3b028a3ce7218), using its checked-in `project-vault.json` and accessible notes. The README itself was outside the configured notes roots.
+- **Tokenizer:** [`tiktoken`](https://github.com/openai/tiktoken) **0.14.0**, encoding **`o200k_base`**. No model or API calls were made.
+- **Counting:** the baseline includes each question and all notes with their note IDs. MCP totals include the question, all six advertised tool definitions (**1,148 tokens per question**), call arguments, and complete SDK response JSON, including both text and structured content when present. The search + read strategy always reads the highest-ranked note, without using expected-answer labels to select it.
+- **Excluded:** shared system prompts, provider-specific tool framing, cached-input effects, model output, reasoning tokens, and billing. Individual hosts and tokenizers can produce different counts.
+
+The five fixed questions and their counted tokens were:
+
+| Question | Without MCP: all notes | With MCP: search only | With MCP: search + read |
+| --- | ---: | ---: | ---: |
+| How are write permissions enabled and stale updates rejected? | 7,084 | 2,160 | 5,887 |
+| Which frontmatter privacy labels deny access to notes? | 7,084 | 2,018 | 4,668 |
+| How does cached retrieval enforce revision freshness? | 7,082 | 1,968 | 3,344 |
+| How are request rate limits and audit events configured? | 7,084 | 2,074 | 5,801 |
+| Why use local Markdown and stdio instead of a hosted database? | 7,087 | 2,118 | 2,801 |
+
+The expected note appeared in the top three results for **5/5** questions. Search excerpts contained all predefined evidence terms for **2/5** questions; reading the highest-ranked note increased that to **4/5**. The remaining check requested the literal parameter `expected_revision`, while the retrieved configuration note describes the revision requirement without that literal name; that check remains unresolved. File matches and term presence do not establish answer correctness.
+
+This is one small corpus and a comparison against loading every note. Supplying only a known relevant note took **244–1,609 tokens** per question here, so the experiment does not establish an advantage over manual context selection or other retrieval systems. The percentages are not guaranteed savings for other projects, measured reasoning improvements, or an increase in context-window capacity.
+
+</details>
 
 ## Quick start
 
